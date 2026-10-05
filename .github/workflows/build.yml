@@ -1,0 +1,27 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  win32:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Assemble and link
+        run: |
+          nasm -fwin32 helloworld.asm
+          link /entry:main helloworld.obj /subsystem:console /nodefaultlib kernel32.lib
+
+      - name: Run
+        run: .\helloworld.exe

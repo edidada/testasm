@@ -2,28 +2,23 @@ name: build
 
 on:
   push:
-    branches: [master]
+    branches: [linux]
   pull_request:
   workflow_dispatch:
 
 jobs:
-  win32:
-    runs-on: windows-2022
+  linux:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
       - name: Install NASM
-        uses: ilammy/setup-nasm@v1
-
-      - name: Setup MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x86
+        run: sudo apt-get update && sudo apt-get install -y nasm
 
       - name: Assemble and link
         run: |
-          nasm -fwin32 helloworld.asm
-          link /entry:main helloworld.obj /subsystem:console /nodefaultlib kernel32.lib
+          nasm -felf64 helloworld.asm -o helloworld.o
+          gcc helloworld.o -o helloworld
 
       - name: Run
-        run: .\helloworld.exe
+        run: ./helloworld

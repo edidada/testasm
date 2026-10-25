@@ -18,7 +18,7 @@ jobs:
       - name: Assemble and link
         run: |
           nasm -felf64 helloworld.asm -o helloworld.o
-          gcc helloworld.o -o helloworld
+          gcc -no-pie helloworld.o -o helloworld
 
       - name: Run
         run: ./helloworld

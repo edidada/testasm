@@ -14,6 +14,7 @@ main:
         lea     rdi, [rel message]              ; First argument: address of message
         call    puts                            ; puts(message)
         add     rsp, 8
+        xor     eax, eax                        ; Return 0 from main
         ret
 message:
         db      'Hello, World', 0               ; C strings need a zero byte at the end

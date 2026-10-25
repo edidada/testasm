@@ -2,28 +2,23 @@ name: build
 
 on:
   push:
-    branches: [master]
+    branches: [mac]
   pull_request:
   workflow_dispatch:
 
 jobs:
-  win32:
-    runs-on: windows-2022
+  mac:
+    runs-on: macos-13
     steps:
       - uses: actions/checkout@v5
 
       - name: Install NASM
-        uses: ilammy/setup-nasm@v1
-
-      - name: Setup MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x86
+        run: brew install nasm
 
       - name: Assemble and link
         run: |
-          nasm -fwin32 helloworld.asm
-          link /entry:main helloworld.obj /subsystem:console /nodefaultlib kernel32.lib
+          nasm -fmacho64 helloworld.asm -o helloworld.o
+          gcc helloworld.o -o helloworld
 
       - name: Run
-        run: .\helloworld.exe
+        run: ./helloworld

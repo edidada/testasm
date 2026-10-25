@@ -1,41 +1,20 @@
-STD_OUTPUT_HANDLE equ -11
-%define NULL    dword 0
-
-    extern  _GetStdHandle@4
-    extern  _WriteFile@20
-    extern  _ExitProcess@4
-
-    global _main
-
-    section .text
-
+; ----------------------------------------------------------------------------------------
+; macOS x86_64 console program that writes "Hello, World" and exits.
+; Uses puts() from the C library.  To assemble, link and run:
+;
+;     nasm -fmacho64 helloworld.asm -o helloworld.o
+;     gcc helloworld.o -o helloworld
+;     ./helloworld
+; ----------------------------------------------------------------------------------------
+        global  _main
+        extern  _puts
+        section .text
 _main:
-    ; local variable
-bytesWritten equ -4
-    mov     ebp, esp
-    sub     esp, 4
-
-    ; hStdOut = GetstdHandle(STD_OUTPUT_HANDLE)
-    push    STD_OUTPUT_HANDLE
-    call    _GetStdHandle@4
-    mov     ebx, eax
-
-    ; WriteFile(hstdOut, message, length(message),
-    ;           &bytesWritten, null);
-    push    NULL
-    lea     eax, [ebp + bytesWritten]
-    push    eax
-    push    (message_end - message)
-    push    message
-    push    ebx
-    call    _WriteFile@20
-
-    ; ExitProcess(0)
-    push    0
-    call    _ExitProcess@4
-
-    ; never here
-    hlt
+        sub     rsp, 8                          ; Align stack to 16 bytes before call
+        lea     rdi, [rel message]              ; First argument: address of message
+        call    _puts                           ; puts(message)
+        add     rsp, 8
+        xor     eax, eax                        ; Return 0 from main
+        ret
 message:
-    db      'Hello, World', 10
-message_end:
+        db      'Hello, World', 0               ; C strings need a zero byte at the end

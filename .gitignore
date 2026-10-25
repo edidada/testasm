@@ -1,0 +1,10 @@
+# Assembly build artifacts
+*.obj
+*.o
+*.exe
+*.com
+*.bin
+*.lst
+*.map
+*.ilk
+*.pdb

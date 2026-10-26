@@ -1,0 +1,51 @@
+name: testfile
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  testfile:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+
+      - name: Build C version
+        run: cl /W4 testfile.c
+
+      - name: Build assembly version
+        run: |
+          nasm -fwin32 createfile.asm
+          link /entry:main createfile.obj /subsystem:console /nodefaultlib kernel32.lib
+
+      - name: C version creates test.txt and writes 'a'
+        run: |
+          If (Test-Path test.txt) { Remove-Item test.txt }
+          .\testfile.exe
+          if ((Get-Content -Raw test.txt) -ne "a") { exit 1 }
+
+      - name: C version refuses to overwrite existing test.txt
+        run: |
+          .\testfile.exe
+          if ($LASTEXITCODE -eq 0) { exit 1 }
+
+      - name: Assembly version also refuses to overwrite
+        run: |
+          .\createfile.exe
+          if ($LASTEXITCODE -eq 0) { exit 1 }
+
+      - name: Assembly version creates test.txt fresh and writes 'a'
+        run: |
+          If (Test-Path test.txt) { Remove-Item test.txt }
+          .\createfile.exe
+          if ((Get-Content -Raw test.txt) -ne "a") { exit 1 }

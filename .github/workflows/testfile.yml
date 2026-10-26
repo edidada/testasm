@@ -1,0 +1,50 @@
+name: testfile
+
+on:
+  push:
+    branches: [mac]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  testfile:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install NASM
+        run: brew install nasm
+
+      - name: Build C version
+        run: gcc -Wall -Wextra testfile.c -o testfile
+
+      - name: Build assembly version
+        run: |
+          nasm -fmacho64 createfile.asm -o createfile.o
+          gcc createfile.o -o createfile
+
+      - name: C version creates test.txt and writes 'a'
+        run: |
+          rm -f test.txt
+          ./testfile
+          test "$(cat test.txt)" = "a"
+
+      - name: C version refuses to overwrite existing test.txt
+        run: |
+          if ./testfile; then
+            echo "ERROR: should have failed because test.txt exists"
+            exit 1
+          fi
+
+      - name: Assembly version also refuses to overwrite
+        run: |
+          if ./createfile; then
+            echo "ERROR: should have failed because test.txt exists"
+            exit 1
+          fi
+
+      - name: Assembly version creates test.txt fresh and writes 'a'
+        run: |
+          rm -f test.txt
+          ./createfile
+          test "$(cat test.txt)" = "a"

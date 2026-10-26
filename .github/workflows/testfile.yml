@@ -1,0 +1,50 @@
+name: testfile
+
+on:
+  push:
+    branches: [linux]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  testfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install NASM
+        run: sudo apt-get update && sudo apt-get install -y nasm
+
+      - name: Build C version
+        run: gcc -Wall -Wextra testfile.c -o testfile
+
+      - name: Build assembly version
+        run: |
+          nasm -felf64 createfile.asm -o createfile.o
+          ld createfile.o -o createfile
+
+      - name: C version creates test.txt and writes 'a'
+        run: |
+          rm -f test.txt
+          ./testfile
+          test "$(cat test.txt)" = "a"
+
+      - name: C version refuses to overwrite existing test.txt
+        run: |
+          if ./testfile; then
+            echo "ERROR: should have failed because test.txt exists"
+            exit 1
+          fi
+
+      - name: Assembly version also refuses to overwrite
+        run: |
+          if ./createfile; then
+            echo "ERROR: should have failed because test.txt exists"
+            exit 1
+          fi
+
+      - name: Assembly version creates test.txt fresh and writes 'a'
+        run: |
+          rm -f test.txt
+          ./createfile
+          test "$(cat test.txt)" = "a"

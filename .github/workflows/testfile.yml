@@ -38,11 +38,13 @@ jobs:
         run: |
           .\testfile.exe
           if ($LASTEXITCODE -eq 0) { exit 1 }
+          exit 0   # pwsh exits 1 if the last native command failed, so force success
 
       - name: Assembly version also refuses to overwrite
         run: |
           .\createfile.exe
           if ($LASTEXITCODE -eq 0) { exit 1 }
+          exit 0   # pwsh exits 1 if the last native command failed, so force success
 
       - name: Assembly version creates test.txt fresh and writes 'a'
         run: |

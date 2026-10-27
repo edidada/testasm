@@ -11,7 +11,7 @@ echo "== Compile C kernel (kernel.c) =="
 gcc -m32 -ffreestanding -nostdlib -fno-pie -no-pie -O2 -c kernel.c -o kernel.o
 
 echo "== Link (link.ld) =="
-ld -m elf_i386 -T link.ld -o kernel.elf start.o kernel.o
+ld -N -m elf_i386 -T link.ld -o kernel.elf start.o kernel.o
 
 echo "== Convert to raw binary (QEMU -kernel wants a flat image) =="
 objcopy -O binary kernel.elf kernel.bin

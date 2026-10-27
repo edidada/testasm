@@ -19,9 +19,9 @@ objcopy -O binary kernel.elf kernel.bin
 echo "== Segments (debug) =="
 readelf -l kernel.elf | head -12
 
-echo "== Run in QEMU, serial -> serial.out =="
+echo "== Run in QEMU; serial -> stdout (captured by tee) =="
 : > serial.out
-timeout 10 qemu-system-i386     -kernel kernel.bin     -serial file:serial.out     -display none -monitor none -no-reboot
-
+timeout 10 qemu-system-i386     -kernel kernel.bin     -nographic -monitor none -no-reboot     | tee serial.out
+echo "== QEMU finished (exit ${PIPESTATUS[0]}) =="
 echo "== Program execution result =="
 cat serial.out

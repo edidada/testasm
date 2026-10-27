@@ -12,6 +12,8 @@ gcc -m32 -ffreestanding -nostdlib -O2 -c kernel.c -o kernel.o
 
 echo "== Link (link.ld) =="
 ld -m elf_i386 -T link.ld -o kernel.elf start.o kernel.o
+echo "== Segments (debug) =="
+readelf -l kernel.elf | head -20
 
 echo "== Run in QEMU, serial -> serial.out =="
 : > serial.out

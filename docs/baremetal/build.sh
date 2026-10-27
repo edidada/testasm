@@ -8,10 +8,10 @@ echo "== Assemble bootstrap (start.asm) =="
 nasm -felf32 start.asm -o start.o
 
 echo "== Compile C kernel (kernel.c) =="
-gcc -m32 -ffreestanding -nostdlib -O2 -c kernel.c -o kernel.o
+gcc -m32 -ffreestanding -nostdlib -fno-pie -no-pie -O2 -c kernel.c -o kernel.o
 
 echo "== Link (link.ld) =="
-ld -m elf_i386 -T link.ld -o kernel.elf start.o kernel.o
+ld -m elf_i386 -z max-page-size=0x100 -T link.ld -o kernel.elf start.o kernel.o
 echo "== Segments (debug) =="
 readelf -l kernel.elf | head -20
 

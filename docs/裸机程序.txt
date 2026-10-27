@@ -1,0 +1,820 @@
+如果想深入学习操作系统底层，我建议做三个对照实验：
+1. Linux C + glibc：使用 printf() 输出字符，用 strace 观察系统调用。
+2. Linux C 无 glibc：使用 x86-64 syscall 指令直接调用 Linux 内核。
+3. 真正的 x86 裸机 C：使用 ASM 初始化运行环境，调用 C 函数，通过 VGA 文本显存或串口输出字符，在 QEMU 中运行。
+这三个实验能够清楚展示：同样是 C 语言，glibc、Linux 系统调用、CPU 指令和裸机硬件访问究竟有什么区别。
+
+
+
+是的。**裸机 C 和 Linux C 使用的都是 C 语言，但运行环境完全不同。**
+
+核心区别是：
+
+- **裸机 C（Bare-metal C）**：没有 Linux 内核，没有 Linux 系统调用，通常也没有 glibc，需要自己管理硬件和运行环境。
+- **Linux C**：运行在 Linux 操作系统上，可以使用 Linux 系统调用，以及 glibc 等用户态库。
+- **两者的 C 语言语法基本相同**，但底层运行机制、可使用的 API、程序启动方式和硬件访问方式不同。
+
+## 一、整体架构对比
+
+### 1. Linux C 程序
+
+```text
+┌──────────────────────────────────┐
+│          C 应用程序               │
+│                                  │
+│  main()                          │
+│  printf()                        │
+│  malloc()                        │
+│  fopen()                         │
+│  pthread_create()                │
+└──────────────────────────────────┘
+                 │
+                 ▼
+┌──────────────────────────────────┐
+│           glibc                  │
+│                                  │
+│  C 标准库                        │
+│  POSIX API                       │
+│  Linux 系统调用封装               │
+└──────────────────────────────────┘
+                 │
+                 ▼
+┌──────────────────────────────────┐
+│        Linux System Call         │
+│                                  │
+│  read / write                    │
+│  openat / close                  │
+│  mmap / brk                      │
+│  clone / futex                   │
+│  socket / ioctl                  │
+└──────────────────────────────────┘
+                 │
+                 ▼
+┌──────────────────────────────────┐
+│          Linux Kernel            │
+│                                  │
+│  进程调度                        │
+│  虚拟内存                        │
+│  文件系统                        │
+│  网络协议栈                      │
+│  设备驱动                        │
+└──────────────────────────────────┘
+                 │
+                 ▼
+┌──────────────────────────────────┐
+│             硬件                 │
+│                                  │
+│  CPU / RAM / SSD / NIC           │
+└──────────────────────────────────┘
+```
+
+例如：
+
+```c
+#include <stdio.h>
+
+int main(void)
+{
+    printf("Hello Linux\n");
+    return 0;
+}
+```
+
+在典型的 Linux + glibc 环境下：
+
+```text
+printf()
+    │
+    ▼
+glibc 的 stdio 实现
+    │
+    ▼
+write() 系统调用
+    │
+    ▼
+Linux Kernel
+    │
+    ▼
+终端设备驱动
+    │
+    ▼
+屏幕显示
+```
+
+注意：`printf()` 有缓冲机制，不一定每次调用都立即触发 `write()`。
+
+### 2. 裸机 C 程序
+
+```text
+┌──────────────────────────────────┐
+│           C 程序                 │
+│                                  │
+│  main()                          │
+│  gpio_write()                    │
+│  uart_send()                     │
+│  timer_init()                    │
+└──────────────────────────────────┘
+                 │
+                 ▼
+┌──────────────────────────────────┐
+│     裸机运行时 / HAL / 驱动       │
+│                                  │
+│  Startup Code                    │
+│  中断向量表                      │
+│  内存初始化                      │
+│  GPIO 驱动                       │
+│  UART 驱动                       │
+└──────────────────────────────────┘
+                 │
+                 ▼
+┌──────────────────────────────────┐
+│        CPU / RAM / 硬件          │
+└──────────────────────────────────┘
+```
+
+例如：
+
+```c
+#include <stdint.h>
+
+/* 示例地址，仅适用于相应硬件 */
+#define UART_DR (*(volatile uint32_t *)0x4000C000)
+
+void uart_send(char c)
+{
+    UART_DR = (uint32_t)c;
+}
+
+int main(void)
+{
+    uart_send('A');
+
+    while (1) {
+    }
+}
+```
+
+这段代码展示的是直接访问内存映射寄存器的方式。实际 UART 驱动还需要正确配置时钟、引脚、波特率并检查发送状态。
+
+**裸机 C 没有 Linux 的 `write()` 系统调用，因此通常需要通过硬件寄存器或者自己实现的驱动完成输出。**
+
+---
+
+## 二、Linux C 与裸机 C 的 API 对比
+
+| 功能 | Linux C | 裸机 C |
+|---|---|---|
+| C 语言语法 | ISO C | ISO C |
+| C 标准库 | glibc、musl 等 | newlib、picolibc 或自定义实现 |
+| 系统调用 | Linux syscall | 通常没有 |
+| `printf()` | glibc 实现 | 需要提供底层输出支持 |
+| `malloc()` | glibc 等库实现 | 需要配置堆和分配器 |
+| `open()` | Linux/POSIX API | 自己实现文件访问接口 |
+| `read()` | Linux/POSIX API | 自己实现设备读取 |
+| `write()` | Linux/POSIX API | 自己实现设备写入 |
+| `socket()` | Linux Socket API | 需要网络协议栈 |
+| `pthread_create()` | POSIX 线程 API | 通常没有 |
+| `mmap()` | Linux 内存映射 API | 通常没有 |
+| 中断处理 | 内核负责 | 程序自己负责 |
+| 内存管理 | 内核 + 用户态分配器 | 程序自行管理 |
+| 进程调度 | Linux 内核 | 通常没有进程概念 |
+| 文件系统 | VFS + 文件系统驱动 | 需要自行实现或移植 |
+| 网络通信 | Linux TCP/IP 协议栈 | 可以使用 lwIP 等 |
+| 硬件访问 | 通过驱动、系统调用等 | 通常直接操作寄存器 |
+
+特别注意：
+
+**C 标准库不等于 glibc，glibc 也不等于 Linux 系统调用。**
+
+它们是三个不同层次的概念。
+
+---
+
+## 三、C 标准库、glibc、Linux 系统调用是什么关系？
+
+这是理解 Linux C 开发的重要基础。
+
+### 1. ISO C 标准库
+
+ISO C 定义了一组标准函数，例如：
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <stdint.h>
+```
+
+典型函数：
+
+```c
+printf();
+malloc();
+free();
+memcpy();
+strlen();
+sqrt();
+```
+
+这些函数并不全部需要操作系统。
+
+例如：
+
+```c
+#include <string.h>
+
+int main(void)
+{
+    char src[] = "hello";
+    char dst[32];
+
+    memcpy(dst, src, sizeof(src));
+
+    return 0;
+}
+```
+
+`memcpy()` 的核心操作只是复制内存。
+
+因此它完全可以运行在裸机上。
+
+### 2. glibc
+
+[GNU C Library（glibc）](https://www.gnu.org/software/libc/?utm_source=chatgpt.com) 是 GNU 项目提供的 C 运行库。
+
+它不仅实现 ISO C 标准库，还提供 POSIX 接口及 GNU/Linux 扩展。
+
+例如：
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <pthread.h>
+```
+
+这些 API 来源并不完全相同：
+
+| API | 标准来源 | glibc 是否提供 |
+|---|---|---|
+| `printf()` | ISO C | 是 |
+| `malloc()` | ISO C | 是 |
+| `memcpy()` | ISO C | 是 |
+| `read()` | POSIX | 是 |
+| `write()` | POSIX | 是 |
+| `fork()` | POSIX | 是 |
+| `pthread_create()` | POSIX | 是 |
+| `mmap()` | POSIX | 是 |
+| `epoll_create1()` | Linux 扩展 | 是 |
+| `eventfd()` | Linux 扩展 | 是 |
+
+所以：
+
+```text
+glibc
+ ├── ISO C 标准库
+ ├── POSIX API
+ ├── GNU 扩展
+ └── Linux 系统调用封装
+```
+
+但 glibc 并不是 Linux 内核的一部分。
+
+### 3. Linux 系统调用
+
+Linux 系统调用是用户态程序请求 Linux 内核提供服务的接口。
+
+例如：
+
+```c
+#include <unistd.h>
+
+int main(void)
+{
+    write(1, "Hello\n", 6);
+    return 0;
+}
+```
+
+这里：
+
+```c
+write(1, "Hello\n", 6);
+```
+
+通常会通过 glibc 的封装调用 Linux 内核的 `write` 系统调用。
+
+在 x86-64 Linux 上，底层通常通过 `syscall` 指令进入内核。
+
+---
+
+## 四、Linux C 可以绕过 glibc，直接调用系统调用吗？
+
+**可以。**
+
+这也是 Linux C 与裸机 C 很值得比较的地方。
+
+### 1. 使用 glibc
+
+```c
+#include <unistd.h>
+
+int main(void)
+{
+    write(1, "Hello Linux\n", 12);
+    return 0;
+}
+```
+
+编译：
+
+```bash
+gcc main.c -o main
+```
+
+运行：
+
+```bash
+./main
+```
+
+### 2. 不使用 glibc，直接执行 syscall
+
+以下示例针对 **Linux x86-64**，使用 GCC/Clang 支持的扩展汇编：
+
+```c
+static long sys_write(
+    unsigned long fd,
+    const char *buf,
+    unsigned long count)
+{
+    long ret;
+
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(1L),
+          "D"(fd),
+          "S"(buf),
+          "d"(count)
+        : "rcx", "r11", "memory"
+    );
+
+    return ret;
+}
+
+__attribute__((noreturn))
+void _start(void)
+{
+    const char msg[] = "Hello Linux\n";
+
+    sys_write(1, msg, sizeof(msg) - 1);
+
+    __asm__ volatile (
+        "syscall"
+        :
+        : "a"(60L), "D"(0L)
+        : "rcx", "r11", "memory"
+    );
+
+    __builtin_unreachable();
+}
+```
+
+编译：
+
+```bash
+gcc -nostdlib -static -fno-stack-protector \
+    -fno-builtin -fno-pie -no-pie \
+    main.c -o main
+```
+
+运行：
+
+```bash
+./main
+```
+
+输出：
+
+```text
+Hello Linux
+```
+
+这个程序：
+
+- 不使用 glibc。
+- 不使用 `printf()`。
+- 不使用 `main()`。
+- 直接从 `_start` 入口执行。
+- 直接通过 CPU 的 `syscall` 指令请求 Linux 内核服务。
+
+但是，**它仍然不是裸机程序！**
+
+因为它仍然依赖 Linux 内核：
+
+```text
+_start
+   │
+   ▼
+syscall 指令
+   │
+   ▼
+Linux Kernel
+   │
+   ▼
+终端驱动
+   │
+   ▼
+硬件
+```
+
+Linux 内核负责加载这个 ELF 文件、创建进程、建立地址空间并提供系统调用。
+
+因此：
+
+> 不使用 glibc ≠ 裸机开发。
+>
+> 不使用操作系统，才是裸机开发的核心特征。
+
+---
+
+## 五、裸机 C 可以使用标准库吗？
+
+可以，但需要区分两类环境。
+
+### 1. Freestanding Environment
+
+ISO C 标准将 C 运行环境分为：
+
+- Hosted Environment（宿主环境）
+- Freestanding Environment（独立环境）
+
+Linux 用户态程序通常属于 Hosted Environment。
+
+裸机程序通常属于 Freestanding Environment。
+
+两者区别：
+
+| 项目 | Hosted | Freestanding |
+|---|---|---|
+| 操作系统 | 通常有 | 不要求 |
+| `main()` | 标准程序入口 | 不强制 |
+| 完整标准库 | 要求提供 | 只要求规定的子集 |
+| `printf()` | 通常可用 | 不保证 |
+| `malloc()` | 通常可用 | 不保证 |
+| 程序启动 | 运行时初始化 | 需要平台启动代码 |
+| 链接脚本 | 通常由工具链处理 | 经常需要自定义 |
+
+在 GCC 中可以使用：
+
+```bash
+gcc -ffreestanding -c main.c
+```
+
+但 `-ffreestanding` 不会自动生成启动代码、链接脚本或者硬件驱动。
+
+### 2. 裸机也可以使用 C 标准库实现
+
+例如：
+
+- [newlib](https://sourceware.org/newlib/?utm_source=chatgpt.com)
+- [picolibc](https://github.com/picolibc/picolibc?utm_source=chatgpt.com)
+- [musl libc](https://musl.libc.org/?utm_source=chatgpt.com)（主要面向类 Unix 环境，不是典型裸机库）
+
+其中 newlib 和 picolibc 是嵌入式裸机开发常见的 C 库选择。
+
+例如 newlib 的 `printf()` 可以通过底层 `_write()` 接口输出数据。
+
+```text
+printf()
+    │
+    ▼
+newlib
+    │
+    ▼
+_write()
+    │
+    ▼
+UART Driver
+    │
+    ▼
+UART Hardware
+```
+
+开发者需要根据平台提供适当的底层支持。
+
+---
+
+## 六、为什么 Linux C 不允许随意访问硬件寄存器？
+
+例如：
+
+```c
+#define GPIO (*(volatile unsigned int *)0x40020000)
+
+int main(void)
+{
+    GPIO = 1;
+    return 0;
+}
+```
+
+在裸机环境下，只要地址正确、内存映射有效并且 CPU 具有相应权限，这种操作就可能直接控制硬件。
+
+但在普通 Linux 用户态程序中：
+
+```text
+Linux 用户态程序
+       │
+       ▼
+CPU MMU 地址转换
+       │
+       ▼
+访问权限检查
+       │
+       ▼
+未映射或无权限
+       │
+       ▼
+可能触发 SIGSEGV
+```
+
+Linux 用户态不能任意访问物理地址。
+
+通常需要通过：
+
+```text
+用户态 C 程序
+       │
+       ▼
+open() / read() / write() / ioctl()
+       │
+       ▼
+Linux 设备驱动
+       │
+       ▼
+硬件寄存器
+```
+
+特殊情况下，可以通过 `/dev/mem` 等机制，在具有相应权限且内核允许时映射物理内存，但这并不是普通应用程序推荐的硬件访问方式。
+
+---
+
+## 七、Linux 内核本身算裸机 C 吗？
+
+这是一个容易混淆的问题。
+
+Linux 内核主要使用 C 语言开发，也包含汇编和 Rust 代码。
+
+Linux 内核：
+
+- 不使用用户态 glibc。
+- 不通过 Linux 系统调用请求自身提供服务。
+- 有自己的内存管理。
+- 有自己的调度器。
+- 有自己的设备驱动。
+- 直接管理 CPU 和硬件资源。
+
+例如 Linux 内核中可以使用：
+
+```c
+kmalloc();
+kfree();
+printk();
+```
+
+但不能直接把用户态的：
+
+```c
+malloc();
+free();
+printf();
+```
+
+当作内核 API 使用。
+
+可以这样理解：
+
+```text
+Linux 用户态 C
+      │
+      ├── glibc
+      ├── syscall
+      │
+      ▼
+Linux 内核
+      │
+      ├── C
+      ├── ASM
+      ├── Rust
+      ├── 内存管理
+      ├── 设备驱动
+      │
+      ▼
+硬件
+```
+
+Linux 内核属于直接管理硬件的系统软件，但**完整的 Linux 内核通常不称为裸机程序**，因为它本身就是操作系统内核。
+
+不过，从内核早期启动阶段来看，它确实具有很多裸机编程特征。
+
+---
+
+## 八、总结：理解这五个层次
+
+```text
+第一层：C 语言
+    │
+    ├── ISO C 语法
+    ├── 指针
+    ├── 结构体
+    └── 函数
+    │
+    ▼
+第二层：C 标准库
+    │
+    ├── printf
+    ├── malloc
+    ├── memcpy
+    └── strlen
+    │
+    ▼
+第三层：操作系统 API
+    │
+    ├── POSIX
+    ├── Linux API
+    └── Windows API
+    │
+    ▼
+第四层：操作系统内核
+    │
+    ├── 系统调用
+    ├── 进程调度
+    ├── 内存管理
+    ├── 文件系统
+    └── 设备驱动
+    │
+    ▼
+第五层：CPU / 硬件
+```
+
+这是一张概念分层图，并不表示所有 C 函数都必须逐层调用。例如 `memcpy()` 通常不需要系统调用。
+
+### 最终对比
+
+| 类型 | C 标准库 | glibc | Linux syscall | 直接操作硬件 |
+|---|---|---|---|---|
+| Linux 用户态 C | ✅ | 通常使用 | ✅ | 通常受限制 |
+| Linux 用户态 C（无 libc） | ❌ 可不使用 | ❌ | ✅ | 通常受限制 |
+| Linux 内核 C | 自有部分实现 | ❌ | 不通过 syscall 调用自身 | ✅ |
+| 裸机 C | 可选 | 通常不用 | ❌ | ✅ |
+
+**如果想深入学习操作系统底层，我建议做三个对照实验：**
+
+1. **Linux C + glibc**：使用 `printf()` 输出字符，用 `strace` 观察系统调用。
+2. **Linux C 无 glibc**：使用 x86-64 `syscall` 指令直接调用 Linux 内核。
+3. **真正的 x86 裸机 C**：使用 ASM 初始化运行环境，调用 C 函数，通过 VGA 文本显存或串口输出字符，在 QEMU 中运行。
+
+这三个实验能够清楚展示：**同样是 C 语言，glibc、Linux 系统调用、CPU 指令和裸机硬件访问究竟有什么区别。**
+---
+
+## 九、实验三的完整实现：ASM 初始化环境 + C 函数，在 QEMU 中运行
+
+前面建议的三个对照实验中，第三个是**真正的 x86 裸机程序**：用 ASM 初始化运行环境、调用 C 函数、通过硬件（串口或 VGA 文本显存）输出字符，并在 QEMU 里运行。
+
+下面给出一份可直接编译、可直接在 QEMU 中运行、也能在 GitHub Action 里自动编译并打印执行结果的完整实现。代码位于 `docs/baremetal/`：
+
+- `start.asm`：32 位 Multiboot 引导代码（ASM 初始化环境），设置栈后调用 C 的 `kernel_main()`。
+- `kernel.c`：裸机 C 内核，直接用 `inb/outb` 指令操作 16550 串口 COM1（0x3F8）输出字符。
+- `link.ld`：链接脚本，把内核链接到 0x100000（QEMU 的 `-kernel` 默认加载地址）。
+- `build.sh`：一键汇编、编译、链接、用 QEMU 运行并把串口输出捕获到 `serial.out`。
+- `.github/workflows/baremetal.yml`：在 `ubuntu-latest` 上安装 nasm/qemu/32 位 gcc，构建并在 QEMU 中运行，最后打印 `serial.out` 中的程序执行结果。
+
+### 关键设计：为什么用串口而不是 VGA 文本显存？
+
+CI（包括 GitHub Action）无法直接“看”到 QEMU 的屏幕，但可以把串口重定向到文件：
+
+```bash
+qemu-system-i386 -kernel kernel.elf -serial file:serial.out -display none
+```
+
+于是程序写串口的内容会被 QEMU 写到 `serial.out`，CI 只要 `cat serial.out` 就能“打印程序执行结果”。这正是本实验能在自动化流程里验证的原因。
+
+### start.asm（ASM 初始化运行环境）
+
+```asm
+bits 32
+
+section .text
+
+; --- Multiboot 头（必须在前 8 KiB 内，4 字节对齐） ---
+MB_MAGIC    equ 0x1BADB002
+MB_FLAGS    equ 0x00000000
+MB_CHECKSUM equ 0x10000000 - (MB_MAGIC + MB_FLAGS)
+
+align 4
+dd MB_MAGIC
+dd MB_FLAGS
+dd MB_CHECKSUM
+
+global _start
+extern kernel_main
+
+_start:
+    mov     esp, stack_top      ; 设置栈
+    call    kernel_main         ; 调用 C 函数
+
+.hang:
+    cli
+    hlt
+    jmp     .hang
+
+section .bss
+align 16
+resb 16384                       ; 16 KiB 栈
+stack_top:
+```
+
+### kernel.c（裸机 C 内核，直接操作硬件）
+
+```c
+#define COM1 0x3F8
+
+static inline unsigned char inb(unsigned short port) {
+    unsigned char v;
+    __asm__ volatile ("inb %1, %0" : "=a"(v) : "Nd"(port));
+    return v;
+}
+static inline void outb(unsigned short port, unsigned char v) {
+    __asm__ volatile ("outb %0, %1" : : "a"(v), "Nd"(port));
+}
+
+static void serial_init(void) {
+    outb(COM1 + 1, 0x00);   /* 关闭中断 */
+    outb(COM1 + 3, 0x80);   /* 允许设置波特率 */
+    outb(COM1 + 0, 0x03);   /* 波特率除数低字节 -> 38400 */
+    outb(COM1 + 1, 0x00);   /* 除数高字节 */
+    outb(COM1 + 3, 0x03);   /* 8 位数据、无校验、1 停止位 */
+    outb(COM1 + 2, 0xC7);   /* 使能 FIFO */
+    outb(COM1 + 4, 0x0B);   /* 断言 RTS/DSR */
+}
+static void serial_putc(char c) {
+    while (!(inb(COM1 + 5) & 0x20)) ;   /* 等发送保持寄存器空 */
+    outb(COM1, (unsigned char)c);
+}
+static void serial_puts(const char *s) {
+    for (; *s; ++s) {
+        if (*s == '\n') serial_putc('\r');
+        serial_putc(*s);
+    }
+}
+static void serial_putdec(unsigned n) {
+    char buf[12]; int i = 0;
+    if (n == 0) buf[i++] = '0';
+    while (n) { buf[i++] = (char)('0' + (n % 10)); n /= 10; }
+    while (i > 0) serial_putc(buf[--i]);
+}
+static unsigned sum_to(unsigned n) {
+    unsigned total = 0;
+    for (unsigned i = 1; i <= n; ++i) total += i;
+    return total;
+}
+void kernel_main(void) {
+    serial_init();
+    serial_puts("Hello from bare metal! (ASM bootstrap + C kernel, running in QEMU)\r\n");
+    serial_puts("sum(1..100) = ");
+    serial_putdec(sum_to(100));
+    serial_puts("\r\n");
+    serial_puts("Bare-metal program finished.\r\n");
+    for (;;) __asm__ volatile ("hlt");
+}
+```
+
+### 本地构建与运行
+
+```bash
+cd docs/baremetal
+bash build.sh
+# 输出：
+# Hello from bare metal! (ASM bootstrap + C kernel, running in QEMU)
+# sum(1..100) = 5050
+# Bare-metal program finished.
+```
+
+### 在 GitHub Action 中自动编译并打印执行结果
+
+`.github/workflows/baremetal.yml` 在 `ubuntu-latest` 上安装 `nasm`、`qemu-system-x86`、`gcc-multilib`，执行 `bash docs/baremetal/build.sh`，最后用 `cat docs/baremetal/serial.out` 打印程序执行结果。
+
+如果 Action 报错（例如工具缺失、链接失败、QEMU 没输出），可在本地用 `gh` 查看日志：
+
+```bash
+gh run list                       # 查看最近的 workflow 运行
+gh run view --log                 # 查看最近一次运行的日志
+# 或针对某次运行：
+gh run view <run-id> --log-failed # 只看失败的 step
+```
+
+> 注意：这个程序是**真正的裸机代码**——没有 Linux、没有 glibc、没有系统调用，只有 ASM 引导 + C 内核 + 直接访问硬件寄存器。它和前面“Linux 无 glibc”的例子（仍依赖 Linux 内核加载 ELF、建立地址空间、提供 syscall）有本质区别。

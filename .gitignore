@@ -1,5 +1,7 @@
 # Assembly build artifacts
 *.obj
+# Bare-metal QEMU serial capture
+docs/baremetal/serial.out
 *.o
 *.exe
 *.com

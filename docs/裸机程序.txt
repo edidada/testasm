@@ -711,14 +711,27 @@ bits 32
 section .text
 
 ; --- Multiboot 头（必须在前 8 KiB 内，4 字节对齐） ---
-MB_MAGIC    equ 0x1BADB002
-MB_FLAGS    equ 0x00000000
-MB_CHECKSUM equ 0x10000000 - (MB_MAGIC + MB_FLAGS)
+; QEMU 的 load_multiboot 在设置 MULTIBOOT_HEADER_HAS_ADDR（bit 16）时走
+; “原始二进制”加载分支，因此必须提供地址字段。校验和需满足：
+;   magic + flags + checksum == 0  (mod 2^32)
+MB_MAGIC        equ 0x1BADB002
+MB_FLAGS        equ 0x00030000   ; bit16: HAS_ADDR, bit17: HAS_ENTRY
+MB_CHECKSUM     equ 0xE44F4FFE   ; -(MB_MAGIC + MB_FLAGS)
+MB_HEADER_ADDR  equ 0x100000
+MB_LOAD_ADDR     equ 0x100000
+MB_LOAD_END_ADDR equ 0x00000000   ; 0 => 加载整个文件
+MB_BSS_END_ADDR  equ 0x00000000   ; bss 已包含在镜像里
+MB_ENTRY_ADDR    equ 0x100020     ; _start 紧跟 32 字节头部之后
 
 align 4
 dd MB_MAGIC
 dd MB_FLAGS
 dd MB_CHECKSUM
+dd MB_HEADER_ADDR
+dd MB_LOAD_ADDR
+dd MB_LOAD_END_ADDR
+dd MB_BSS_END_ADDR
+dd MB_ENTRY_ADDR
 
 global _start
 extern kernel_main
@@ -803,6 +816,8 @@ bash build.sh
 # sum(1..100) = 5050
 # Bare-metal program finished.
 ```
+
+> 注意：裸机程序没有操作系统可以返回，打印完结果后会进入 `hlt` 死循环，因此构建脚本用 `timeout` 停止 QEMU。退出码 124 是预期行为，并不代表失败；真正的编译/运行错误会以其他退出码让 CI 失败。
 
 ### 在 GitHub Action 中自动编译并打印执行结果
 

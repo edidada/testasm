@@ -1,0 +1,246 @@
+可以。我们先用 **C 语言实现**，再用你正在学习的 **8086 汇编（MASM 风格，DOS INT 21H）**实现相同功能。
+
+需求：
+
+1. 如果文件 `test.txt` 已存在，报错并退出。
+2. 如果文件不存在，创建文件。
+3. 向文件写入字符 `a`。
+4. 关闭文件。
+
+## 一、C 语言实现
+
+普通的 `fopen("test.txt", "w")` 不符合要求，因为文件存在时会覆盖原文件。
+
+可以使用 C11 的独占创建模式 `wx`：
+
+```c
+#include <stdio.h>
+
+int main(void)
+{
+    FILE *fp = fopen("test.txt", "wx");
+
+    if (fp == NULL) {
+        perror("创建文件失败");
+        return 1;
+    }
+
+    if (fputc('a', fp) == EOF) {
+        perror("写入文件失败");
+        fclose(fp);
+        return 1;
+    }
+
+    if (fclose(fp) == EOF) {
+        perror("关闭文件失败");
+        return 1;
+    }
+
+    return 0;
+}
+```
+
+其中：
+
+```c
+fopen("test.txt", "wx");
+```
+
+`w` 表示写入模式，`x` 表示独占创建。
+
+如果文件已经存在，创建操作会失败，不会覆盖文件。
+
+注意：`wx` 是 C11 标准提供的模式，部分旧版 C 运行库可能不支持。
+
+---
+
+## 二、8086 汇编实现（MASM 风格）
+
+DOS 的 `INT 21H` 提供文件操作服务。
+
+但要注意：
+
+- `AH=3CH`：创建或截断文件，**存在时会覆盖**。
+- `AH=5BH`：创建新文件，**如果已经存在则失败**。
+- `AH=40H`：写入文件。
+- `AH=3EH`：关闭文件。
+
+因此，这里使用 `AH=5BH`。
+
+```asm
+assume cs:code, ds:data
+
+data segment
+    filename db 'test.txt', 0
+    content  db 'a'
+
+    errmsg db 'Create file failed!$'
+data ends
+
+code segment
+
+start:
+    ; 初始化 DS
+    mov ax, data
+    mov ds, ax
+
+    ; 创建新文件
+    ; AH = 5Bh
+    ; CX = 文件属性
+    ; DS:DX = 文件名地址
+    mov ah, 5Bh
+    mov cx, 0
+    lea dx, filename
+    int 21h
+
+    ; CF=1 表示失败
+    jc error
+
+    ; 创建成功
+    ; AX = 文件句柄
+    mov bx, ax
+
+    ; 写入字符 a
+    ; AH = 40h
+    ; BX = 文件句柄
+    ; CX = 写入字节数
+    ; DS:DX = 数据地址
+    mov ah, 40h
+    mov cx, 1
+    lea dx, content
+    int 21h
+
+    ; 检查写入是否成功
+    jc write_error
+    cmp ax, 1
+    jne write_error
+
+    ; 关闭文件
+    mov ah, 3Eh
+    int 21h
+    jc error
+
+    ; 正常退出
+    mov ax, 4C00h
+    int 21h
+
+write_error:
+    ; BX 仍保存文件句柄
+    mov ah, 3Eh
+    int 21h
+
+error:
+    ; 输出错误信息
+    mov ah, 09h
+    lea dx, errmsg
+    int 21h
+
+    ; 返回错误码 1
+    mov ax, 4C01h
+    int 21h
+
+code ends
+
+end start
+```
+
+这里的 `5BH` 需要 DOS 3.0 或更高版本支持。
+
+## 三、C 语言与汇编逐行对应
+
+| C 语言 | 8086 汇编 | 功能 |
+|---|---|---|
+| `fopen("test.txt","wx")` | `AH=5BH`、`INT 21H` | 独占创建文件 |
+| `fp == NULL` | `JC error` | 判断是否失败 |
+| `fputc('a',fp)` | `AH=40H`、`INT 21H` | 写入字符 |
+| `fclose(fp)` | `AH=3EH`、`INT 21H` | 关闭文件 |
+| `return 0` | `AX=4C00H`、`INT 21H` | 正常退出 |
+
+## 四、为什么汇编要调用 INT 21H？
+
+这是理解汇编和操作系统关系的关键。
+
+执行：
+
+```asm
+mov ah, 5Bh
+mov cx, 0
+lea dx, filename
+int 21h
+```
+
+实际流程：
+
+```text
+8086 汇编程序
+      |
+      | AH = 5Bh
+      | DS:DX = 文件名
+      |
+      v
+   INT 21H
+      |
+      v
+  DOS 操作系统
+      |
+      v
+   文件系统
+      |
+      v
+  磁盘设备驱动
+      |
+      v
+  磁盘控制器
+      |
+      v
+    磁盘
+```
+
+**注意：`INT 21H` 并不是直接操作磁盘寄存器，而是调用 DOS 提供的服务。**
+
+现代 Linux 中，对应的底层调用通常是：
+
+```c
+open("test.txt", O_WRONLY | O_CREAT | O_EXCL, 0644);
+write(fd, "a", 1);
+close(fd);
+```
+
+在 x86-64 Linux 汇编中，这些操作可以通过 `syscall` 指令进入内核。
+
+而在 Windows 中，通常通过 Win32 API 或 C 运行库完成文件操作。
+
+---
+
+## 五、一个值得深入的问题
+
+你学习王爽《汇编语言》时，会发现：
+
+```asm
+mov ax, 4C00H
+int 21H
+```
+
+和：
+
+```asm
+mov ah, 40H
+int 21H
+```
+
+都是调用 DOS 服务。
+
+但 **8086 CPU 本身并不知道什么是文件、文件名、文件夹，也不知道什么是 `test.txt`**。
+
+CPU 只负责执行指令。
+
+文件这个概念是由操作系统和文件系统提供的。
+
+这也解释了为什么同样是汇编语言：
+
+- **DOS 8086 汇编**：使用 `INT 21H` 操作文件。
+- **Linux x86-64 汇编**：使用 `syscall` 操作文件。
+- **Windows x86-64 汇编**：通常调用 Windows API 操作文件。
+- **裸机汇编（没有操作系统）**：需要自己实现设备访问和文件系统逻辑。
+
+**如果你现在使用 Windows 11 的 x86-64 CPU，我更建议下一步看 NASM x86-64 汇编如何在 Linux 中使用 `openat`、`write`、`close` 三个系统调用。** 这样可以把王爽书中的 8086 汇编知识与现代操作系统联系起来。
